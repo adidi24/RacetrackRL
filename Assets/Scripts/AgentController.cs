@@ -135,7 +135,7 @@ public class AgentController : MonoBehaviour
                 else
                 {
                     G = 0;
-                    for (int j = 0; j < episodeStatesList.Count - 1; j++)
+                    for (int j = episodeStatesList.Count - 1; j >= 0; j--)
                     {
                         G--; // Because all rewards are -1 except at the finish line
                         Vector3Int S_t = episodeStatesList[j];
