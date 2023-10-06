@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using Unity.Barracuda;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -12,6 +13,9 @@ public class AgentController : MonoBehaviour
     [SerializeField] private int leftVelocity; // left
     [SerializeField] private int rightVelocity; // right
     [SerializeField] private int forwardVelocity; // forward
+
+    [SerializeField] private Double learnigRate = 0.1;
+    [SerializeField] private Double gamma = 0.9;
 
     [SerializeField] private GameObject agentPrefab;
     [SerializeField] private LayerMask WhatIsAGridLayer;
@@ -24,16 +28,20 @@ public class AgentController : MonoBehaviour
 
     public Tuple<Increments, AgentDirections> currentAction = new(Increments.zero, AgentDirections.forward);
     private Vector3Int currentState;
-    private int episodesCount = 1000;
+    private Tuple<Increments, AgentDirections> nextAction = new(Increments.zero, AgentDirections.forward);
+    private Vector3Int nextState;
+    private readonly int episodesCount = 1000;
     private int currentEpisode = 1;
     private List<Vector3Int> episodeStatesList = new();
     private readonly List<Tuple<Increments, AgentDirections>> episodeActionsList = new();
-    public int G = 0; // cummulativeReward
+    private int G = 0; // cummulativeReward
+    private int p = 8; // for e-greedy policy
 
     public Button startBtn;
+    public Dropdown policyPicker;
     private bool started = false;
 
-    public Text episode, timeStep, cummulativeReward;
+    public Text episode, timeStep, cummulativeReward, velocity;
 
 
 
@@ -88,6 +96,7 @@ public class AgentController : MonoBehaviour
         episode.text = "Episode: " + currentEpisode + " / " + episodesCount;
         timeStep.text = "Time step: " + episodeStatesList.Count;
         cummulativeReward.text = "Cummulative Reward: " + G;
+        velocity.text = "Velocity: H = " + (rightVelocity - leftVelocity) + "| V = " + forwardVelocity;
         Debug.Log("Done Init!");
         //print("possibleStepsValues " + possibleStepsValues.Count);
         //print("possibleStates " + possibleStates.Count);
@@ -109,6 +118,31 @@ public class AgentController : MonoBehaviour
 
     public void StartRun()
     {
+        if (currentEpisode % 5 == 0)
+        {
+            if (p >= 2)
+            p--;
+        };
+        switch (policyPicker.value)
+        {
+            case 0:
+                OnPolicyMonteCarlo();
+                break;
+            case 1:
+                SARSA();
+                break;
+            case 2:
+                QLearning();
+                break;
+            default:
+                break;
+        }
+        
+    }
+
+    // On-policy first-visit MC
+    private void OnPolicyMonteCarlo()
+    {
         // loop trough episodes
         if (currentEpisode <= episodesCount)
         {
@@ -117,7 +151,7 @@ public class AgentController : MonoBehaviour
                 // Choose S0 ∈ S and A0 ∈ A(S0)
                 agentPrefab.GetComponent<AgentMove>().agentState.SetState(agentPrefab, WhatIsAGridLayer, leftVelocity, rightVelocity, forwardVelocity);
                 currentState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
-                currentAction = Egreedy(currentState);
+                currentAction = Egreedy(currentState, p);
 
                 episodeStatesList.Add(currentState);
                 episodeActionsList.Add(currentAction);
@@ -128,7 +162,7 @@ public class AgentController : MonoBehaviour
                 {
                     TakeAction();
                     currentState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
-                    currentAction = Egreedy(currentState);
+                    currentAction = Egreedy(currentState, p);
                     episodeStatesList.Add(currentState);
                     episodeActionsList.Add(currentAction);
                 }
@@ -137,7 +171,11 @@ public class AgentController : MonoBehaviour
                     G = 0;
                     for (int j = episodeStatesList.Count - 1; j >= 0; j--)
                     {
-                        G--; // Because all rewards are -1 except at the finish line
+                        if (j != episodeStatesList.Count - 1) 
+                        {
+                            G--;
+                        } // Because all rewards are -1 except at the finish line
+
                         Vector3Int S_t = episodeStatesList[j];
                         Tuple<Increments, AgentDirections> A_t = episodeActionsList[j];
                         // check if A_t and S_t doesn't exist in the sublist from 0 to j-1
@@ -160,10 +198,11 @@ public class AgentController : MonoBehaviour
             episode.text = "Episode: " + currentEpisode + " / " + episodesCount;
             timeStep.text = "Time step: " + episodeStatesList.Count;
             cummulativeReward.text = "Cummulative Reward: " + G;
-
+            velocity.text = "Velocity: H = " + (rightVelocity - leftVelocity) + "| V = " + forwardVelocity;
         }
     }
 
+    // Check if a state doesn't exist in a sublist of spaces
     private bool NotFoundInSubList(int j, Vector3Int S_t, Tuple<Increments, AgentDirections> A_t)
     {
         bool S_tNotFound = true; // Initialize a flag to indicate if S_t is not found in the sublist
@@ -185,6 +224,100 @@ public class AgentController : MonoBehaviour
         return S_tNotFound && A_tNotFound;
     }
 
+    // SARSA
+    private void SARSA()
+    {
+        // loop trough episodes
+        if (currentEpisode <= episodesCount)
+        {
+            if (episodeStatesList.Count == 0)
+            {
+                // Choose S0 ∈ S and A0 ∈ A(S0)
+                agentPrefab.GetComponent<AgentMove>().agentState.SetState(agentPrefab, WhatIsAGridLayer, leftVelocity, rightVelocity, forwardVelocity);
+                currentState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
+                currentAction = Egreedy(currentState, p);
+
+                episodeStatesList.Add(currentState);
+                episodeActionsList.Add(currentAction);
+            }
+            else
+            {
+                if (agentPrefab.GetComponent<AgentMove>().GetPosition().x != environment.columns - 1)
+                {
+                    TakeAction();
+                    G--;
+                    nextState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
+                    nextAction = Egreedy(nextState, p);
+                    float currentValue = valueFunction[currentState][currentAction];
+                    Double newVal = currentValue + learnigRate * (-1 + gamma * valueFunction[nextState][nextAction] - currentValue);
+                    UpdateActionValueFunction(currentState, currentAction, (float)newVal);
+                    currentState = nextState;
+                    currentAction = nextAction;
+                }
+                else
+                {
+                    currentEpisode++;
+                    G = 0;
+                    episodeStatesList.Clear();
+                    episodeActionsList.Clear();
+                    agentPrefab.GetComponent<AgentMove>().RespawnAgent();
+                }
+            }
+            episode.text = "Episode: " + currentEpisode + " / " + episodesCount;
+            timeStep.text = "Time step: " + episodeStatesList.Count;
+            cummulativeReward.text = "Cummulative Reward: " + G;
+            velocity.text = "Velocity: H = " + (rightVelocity - leftVelocity) + "| V = " + forwardVelocity;
+        }
+    }
+
+    // Q-LEARNING
+    private void QLearning()
+    {
+        // loop trough episodes
+        if (currentEpisode <= episodesCount)
+        {
+            if (episodeStatesList.Count == 0)
+            {
+                // Choose S0 ∈ S and A0 ∈ A(S0)
+                agentPrefab.GetComponent<AgentMove>().agentState.SetState(agentPrefab, WhatIsAGridLayer, leftVelocity, rightVelocity, forwardVelocity);
+                currentState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
+
+                episodeStatesList.Add(currentState);
+                episodeActionsList.Add(currentAction);
+            }
+            else
+            {
+                if (agentPrefab.GetComponent<AgentMove>().GetPosition().x != environment.columns - 1)
+                {
+                    currentAction = Egreedy(currentState, p);
+                    TakeAction();
+                    G--;
+                    nextState = agentPrefab.GetComponent<AgentMove>().agentState.GetState();
+                    nextAction = Pi(nextState);
+
+                    float currentValue = valueFunction[currentState][currentAction];
+                    Double newVal = currentValue + learnigRate * (-1 + gamma * valueFunction[nextState][nextAction] - currentValue);
+                    UpdateActionValueFunction(currentState, currentAction, (float)newVal);
+                    currentState = nextState;
+                }
+                else
+                {
+                    currentEpisode++;
+                    G = 0;
+                    episodeStatesList.Clear();
+                    episodeActionsList.Clear();
+                    agentPrefab.GetComponent<AgentMove>().RespawnAgent();
+                }
+            }
+            episode.text = "Episode: " + currentEpisode + " / " + episodesCount;
+            timeStep.text = "Time step: " + episodeStatesList.Count;
+            cummulativeReward.text = "Cummulative Reward: " + G;
+            velocity.text = "Velocity: H = " + (rightVelocity - leftVelocity) + "| V = " + forwardVelocity;
+        }
+    }
+
+
+    // Function to move a step
     public void MoveStep()
     {
         Vector2 prevPos = agentPrefab.GetComponent<AgentMove>().GetPosition();
@@ -350,12 +483,12 @@ public class AgentController : MonoBehaviour
     }
 
     // epsilon-Greedy Policy function (mapping from state to action)
-    public Tuple<Increments, AgentDirections> Egreedy(Vector3Int s)
+    public Tuple<Increments, AgentDirections> Egreedy(Vector3Int s, int p)
     {
         System.Random rand = new();
         System.Random rnd = new();
         var e = rand.Next(0, 10);
-        if (e < 3)
+        if (e < p)
         {
             Tuple<Increments, AgentDirections> ranKey = valueFunction[s].Keys.ToList()[rnd.Next(0, valueFunction[s].Count)];
             return ranKey;
